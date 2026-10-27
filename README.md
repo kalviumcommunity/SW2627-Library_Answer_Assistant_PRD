@@ -140,6 +140,44 @@ python -m uvicorn Backend.main:app --host 127.0.0.1 --port 8000
 
 Run the tests with `python -m pytest -q`.
 
+## Run the Streamlit UI
+
+The Streamlit frontend calls the FastAPI backend and displays grounded answers
+with expandable citations. Install the frontend dependency:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Build the local document index if it has not been built yet:
+
+```powershell
+python -m scripts.process_documents
+python -m scripts.build_index
+```
+
+Create a local `.env` file with your Gemini key:
+
+```env
+GEMINI_API_KEY=your_api_key_here
+```
+
+Start the backend in one terminal:
+
+```powershell
+python -m uvicorn Backend.main:app --host 127.0.0.1 --port 8000
+```
+
+Start Streamlit from the repository root in a second terminal:
+
+```powershell
+streamlit run app.py
+```
+
+Open the address shown by Streamlit, normally
+`http://localhost:8501`. The backend URL can be changed with the
+`BACKEND_URL` environment variable.
+
 ## Current limitations
 
 The embedding model is downloaded by Chroma on first index creation and the local
