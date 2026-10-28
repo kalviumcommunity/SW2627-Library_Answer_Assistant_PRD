@@ -1,4 +1,4 @@
-# S68-0926-TEAM04-Python-University_Library_Research_Assistant
+
 # University Library Research Assistant
 
 An academic library research assistant prototype that helps university students find **concise, citation-backed answers** from a small collection of research papers using traceable document ingestion and retrieval.
