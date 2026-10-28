@@ -156,11 +156,22 @@ python -m scripts.process_documents
 python -m scripts.build_index
 ```
 
-Create a local `.env` file with your Gemini key:
+Create a local `.env` file. The default example tries Grok first and falls back
+to Gemini when the first provider is unavailable:
 
 ```env
-GEMINI_API_KEY=your_api_key_here
+LLM_PROVIDER=grok
+LLM_FALLBACK_PROVIDER=gemini
+GROK_API_KEY=your_xai_api_key_here
+GROK_MODEL=grok-3-mini
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
 ```
+
+`GROK_API_KEY` is sent to xAI's OpenAI-compatible API endpoint, while
+`GEMINI_API_KEY` is sent to Google's Gemini API. If Grok fails because of an
+invalid key, timeout, provider error, or invalid response, the service tries
+Gemini. If you only want one provider, leave `LLM_FALLBACK_PROVIDER` empty.
 
 Start the backend in one terminal:
 

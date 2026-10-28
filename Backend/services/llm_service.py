@@ -34,34 +34,96 @@ class LLMService:
     def generate(self, question: str, retrieved_evidence: list[dict[str, Any]]) -> GeneratedAnswer:
         if not retrieved_evidence:
             raise LLMResponseError("Cannot generate an answer without evidence.")
-        if settings.llm_provider.lower() != "gemini":
-            raise LLMServiceError("The configured LLM provider is unavailable.")
-        if not settings.llm_api_key:
+        errors: list[LLMServiceError] = []
+        for provider in self._providers():
+            try:
+                raw_text = self._generate_with_provider(
+                    provider, question, retrieved_evidence
+                )
+                generated = parse_generated_answer(raw_text)
+                valid_ids = sorted({
+                    citation_id for citation_id in generated.citation_ids
+                    if 1 <= citation_id <= len(retrieved_evidence)
+                })
+                return GeneratedAnswer(generated.answer, valid_ids)
+            except LLMServiceError as exc:
+                errors.append(exc)
+                logger.warning("%s generation failed: %s", provider, type(exc).__name__)
+
+        if errors:
+            raise errors[-1]
+        raise LLMServiceError("No LLM provider is configured.")
+
+    @staticmethod
+    def _providers() -> list[str]:
+        providers = [settings.llm_provider.lower()]
+        fallback = settings.llm_fallback_provider.lower()
+        if fallback and fallback not in providers:
+            providers.append(fallback)
+        return providers
+
+    def _generate_with_provider(
+        self,
+        provider: str,
+        question: str,
+        retrieved_evidence: list[dict[str, Any]],
+    ) -> str:
+        if provider == "gemini":
+            return self._generate_gemini(question, retrieved_evidence)
+        if provider == "grok":
+            return self._generate_grok(question, retrieved_evidence)
+        raise LLMServiceError(f"The configured LLM provider is unavailable: {provider}.")
+
+    def _generate_gemini(
+        self, question: str, retrieved_evidence: list[dict[str, Any]]
+    ) -> str:
+        api_key = settings.gemini_api_key or settings.llm_api_key
+        if not api_key:
             raise LLMServiceError("Gemini is not configured. Set GEMINI_API_KEY locally.")
         try:
-            response = self._get_client().models.generate_content(
-                model=settings.llm_model,
+            response = self._get_gemini_client(api_key).models.generate_content(
+                model=settings.gemini_model,
                 contents=build_grounded_prompt(question, retrieved_evidence),
                 config=self._generation_config(),
             )
             raw_text = getattr(response, "text", None)
             if not isinstance(raw_text, str) or not raw_text.strip():
                 raise LLMResponseError()
-            generated = parse_generated_answer(raw_text)
-            valid_ids = sorted({
-                citation_id for citation_id in generated.citation_ids
-                if 1 <= citation_id <= len(retrieved_evidence)
-            })
-            return GeneratedAnswer(generated.answer, valid_ids)
+            return raw_text
         except LLMServiceError:
             raise
         except TimeoutError as exc:
             raise LLMServiceError("Gemini request timed out.", 504) from exc
         except Exception as exc:
-            logger.warning("Gemini generation failed: %s", type(exc).__name__)
             raise LLMServiceError("Gemini is currently unavailable.", 503) from exc
 
-    def _get_client(self) -> Any:
+    def _generate_grok(
+        self, question: str, retrieved_evidence: list[dict[str, Any]]
+    ) -> str:
+        if not settings.grok_api_key:
+            raise LLMServiceError("Grok is not configured. Set GROK_API_KEY locally.")
+        try:
+            response = self._get_grok_client().chat.completions.create(
+                model=settings.grok_model,
+                messages=[{"role": "user", "content": build_grounded_prompt(
+                    question, retrieved_evidence
+                )}],
+                response_format={"type": "json_object"},
+                temperature=settings.llm_temperature,
+                max_tokens=settings.llm_max_output_tokens,
+            )
+            raw_text = response.choices[0].message.content
+            if not isinstance(raw_text, str) or not raw_text.strip():
+                raise LLMResponseError()
+            return raw_text
+        except LLMServiceError:
+            raise
+        except TimeoutError as exc:
+            raise LLMServiceError("Grok request timed out.", 504) from exc
+        except Exception as exc:
+            raise LLMServiceError("Grok is currently unavailable.", 503) from exc
+
+    def _get_gemini_client(self, api_key: str) -> Any:
         if self._client is None:
             try:
                 from google import genai
@@ -69,12 +131,24 @@ class LLMService:
             except ImportError as exc:
                 raise LLMServiceError("The Gemini SDK is not installed.") from exc
             self._client = genai.Client(
-                api_key=settings.llm_api_key,
+                api_key=api_key,
                 http_options=types.HttpOptions(
                     timeout=int(settings.llm_timeout_seconds * 1000),
                 ),
             )
         return self._client
+
+    @staticmethod
+    def _get_grok_client() -> Any:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise LLMServiceError("The OpenAI SDK is not installed.") from exc
+        return OpenAI(
+            api_key=settings.grok_api_key,
+            base_url="https://api.x.ai/v1",
+            timeout=settings.llm_timeout_seconds,
+        )
 
     @staticmethod
     def _generation_config() -> Any:
